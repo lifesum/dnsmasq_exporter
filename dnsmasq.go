@@ -36,6 +36,11 @@ var (
 		"localhost:9153",
 		"listen address")
 
+	noLeases = flag.Bool("no_leases",
+		false,
+		"Do not capture dhcp leases",
+	)
+
 	leasesPath = flag.String("leases_path",
 		"/var/lib/misc/dnsmasq.leases",
 		"path to the dnsmasq leases file")
@@ -86,7 +91,6 @@ func init() {
 	for _, g := range floatMetrics {
 		prometheus.MustRegister(g)
 	}
-	prometheus.MustRegister(leases)
 }
 
 // From https://manpages.debian.org/stretch/dnsmasq-base/dnsmasq.8.en.html:
@@ -99,6 +103,11 @@ func init() {
 
 func main() {
 	flag.Parse()
+
+	if !*noLeases {
+		prometheus.MustRegister(leases)
+	}
+
 	promHandler := promhttp.Handler()
 	dnsClient := &dns.Client{
 		SingleInflight: true,
@@ -151,23 +160,25 @@ func main() {
 			return nil
 		})
 
-		eg.Go(func() error {
-			f, err := os.Open(*leasesPath)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-			scanner := bufio.NewScanner(f)
-			var lines float64
-			for scanner.Scan() {
-				lines++
-			}
-			if err := scanner.Err(); err != nil {
-				return err
-			}
-			leases.Set(lines)
-			return nil
-		})
+		if !*noLeases {
+			eg.Go(func() error {
+				f, err := os.Open(*leasesPath)
+				if err != nil {
+					return err
+				}
+				defer f.Close()
+				scanner := bufio.NewScanner(f)
+				var lines float64
+				for scanner.Scan() {
+					lines++
+				}
+				if err := scanner.Err(); err != nil {
+					return err
+				}
+				leases.Set(lines)
+				return nil
+			})
+		}
 
 		if err := eg.Wait(); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
